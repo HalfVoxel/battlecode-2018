@@ -548,6 +548,7 @@ def start_viewer_server(port: int, game: Game) -> socketserver.BaseServer:
 
     return server
 
+
 if __name__ == "__main__":
     print("Do not run this fuction call battlecode cli to start a game")
     sys.exit(1)

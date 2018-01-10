@@ -2,11 +2,10 @@
 This file contains contains the CLI that starts games up
 '''
 
-import argparse
 import time
 import os
 import logging
-from sandbox import Sandbox, NoSandbox
+from sandbox import Sandbox
 import server
 import battlecode as bc
 import ujson as json
@@ -33,10 +32,9 @@ def run_game(game, dockers, args, sock_file):
     '''
 
     # Start the unix stream server
-    server.start_server(sock_file, game, dockers)
+    main_server = server.start_server(sock_file, game, dockers)
 
-    if args['use_viewer']:
-        viewer_server = server.start_viewer_server(PORT, game)
+    viewer_server = server.start_viewer_server(PORT, game) if args['use_viewer'] else None
 
     # Start the docker instances
     for player_key in dockers:
@@ -63,8 +61,12 @@ def run_game(game, dockers, args, sock_file):
     while not game.game_over:
         time.sleep(1)
 
+    print("Stopping bots")
+    for _, docker_inst in dockers.items():
+        docker_inst.destroy()
+
     print("Dumping matchfile")
-    match_ptr = open("/player/" + str(args['replay_filename']), mode='w')
+    match_ptr = open(str(args['replay_filename']), mode='w')
     match_file = {}
     match_file['message'] = game.viewer_messages
     if not game.disconnected:
@@ -80,8 +82,11 @@ def run_game(game, dockers, args, sock_file):
             'player2' : args['dir_p2'][8:], 'winner': winner}
     json.dump(match_file, match_ptr)
     match_ptr.close()
-    if args['use_viewer']:
+    if viewer_server is not None:
         viewer_server.shutdown()
+
+    if main_server is not None:
+        main_server.shutdown()
 
     return winner
 
@@ -98,6 +103,7 @@ def cleanup(dockers, args, sock_file):
 
     print("Ready to run next game.")
 
+
 def get_map(map_name):
     '''
     Read a map of a given name, and return a GameMap.
@@ -111,6 +117,7 @@ def get_map(map_name):
     except Exception as e:
         print("Loading test map...")
         return bc.GameMap.test_map()
+
 
 def create_game(args):
     '''
@@ -133,12 +140,14 @@ def create_game(args):
     dockers = {}
     for index in range(len(game.players)):
         key = [player['id'] for player in game.players][index]
-        if 'NODOCKER' in os.environ:
-            dockers[key] = NoSandbox(sock_file, player_key=key,
-                                local_dir=args['dir_p1' if index % 2 == 0 else 'dir_p2'])
+        # Determine if sandboxing is going to be used or not
+        if args['docker']:
+            # Note, importing a module multiple times is ok in python.
+            # It might take a bit of time to verify that it is already imported though, but that should be negligable.
+            import docker
+            docker_instance = docker.from_env()
         else:
-            dockers[key] = Sandbox(sock_file, player_key=key,
-                                local_dir=args['dir_p1' if index % 2 == 0 else 'dir_p2'])
-
+            docker_instance = None
+        dockers[key] = Sandbox(sock_file, docker_instance=docker_instance, player_key=key, local_dir=args['dir_p1' if index % 2 == 0 else 'dir_p2'])
 
     return (game, dockers, sock_file)
